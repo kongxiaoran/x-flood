@@ -38,7 +38,7 @@ func StartFileWatcher(configPath string) {
 	}()
 
 	// 添加需要监控的文件或目录
-	err = watcher.Add(ConfigPath)
+	err = watcher.Add(configPath)
 	if err != nil {
 		log.Fatal(err)
 	}

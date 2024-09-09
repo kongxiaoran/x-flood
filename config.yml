@@ -1,0 +1,3 @@
+{
+  "workers":["http://localhost:2112/workerLoadTest","http://localhost:2114/workerLoadTest"]
+}

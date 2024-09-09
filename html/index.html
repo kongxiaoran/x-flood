@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>X flood 分布式压测</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .target-card {
+            position: relative;
+            padding: 10px; /* 减小padding */
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            margin-bottom: 10px; /* 减小margin */
+            background-color: #f8f9fa;
+            font-size: 14px; /* 调整字体大小 */
+            width: 45%; /* 每个卡片宽度减小到当前的一半 */
+            margin-right: 2%; /* 卡片之间的间距 */
+        }
+        #targets {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px; /* 卡片之间的间隙 */
+        }
+        .delete-target {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            cursor: pointer;
+            color: red;
+        }
+        .table-container {
+            overflow-y: auto;
+            max-height: 400px;
+        }
+        table th {
+            position: sticky;
+            top: 0;
+            background-color: white;
+            z-index: 1;
+        }
+    </style>
+</head>
+<body>
+<div class="container mt-5">
+    <h1 class="text-center mb-4">X flood 分布式压测</h1>
+
+    <!-- Form to create new test targets -->
+    <form id="loadTestForm">
+        <div id="targets">
+            <div class="target-card">
+                <h5>任务1</h5>
+                <span class="delete-target" onclick="deleteTarget(this)">✖</span>
+                <div class="mb-1">
+                    <label for="url1" class="form-label">接口路径</label>
+                    <input type="text" class="form-control" id="url1" name="url" required>
+                </div>
+                <div class="mb-1">
+                    <label for="method1" class="form-label">请求方式</label>
+                    <select class="form-select" id="method1" name="method">
+                        <option value="GET">GET</option>
+                        <option value="POST">POST</option>
+                    </select>
+                </div>
+                <div class="mb-1">
+                    <label for="rate1" class="form-label">压测QPS(每秒)</label>
+                    <input type="number" class="form-control" id="rate1" name="rate" required>
+                </div>
+                <div class="mb-1">
+                    <label for="duration1" class="form-label">压测时间(秒)</label>
+                    <input type="number" class="form-control" id="duration1" name="duration" required>
+                </div>
+                <div class="mb-1">
+                    <label for="headers1" class="form-label">请求头</label>
+                    <input type="text" class="form-control" id="headers1" name="headers">
+                </div>
+                <div class="mb-1">
+                    <label for="body1" class="form-label">请求体</label>
+                    <textarea class="form-control" id="body1" name="body" rows="2" placeholder="post请求时使用（JSON格式）"></textarea>
+                </div>
+            </div>
+        </div>
+        <button type="button" class="btn btn-secondary" id="addTargetBtn">添加测试接口</button>
+        <button type="submit" class="btn btn-primary">发送测试</button>
+    </form>
+
+    <!-- Result section -->
+    <div id="results" class="results mt-5">
+        <h2>测试结果</h2>
+        <div class="table-container">
+            <table class="table table-bordered table-striped">
+                <thead>
+                <tr>
+                    <th>目标</th>
+                    <th>QPS(req/s)</th>
+                    <th>持续时间(s)</th>
+                    <th>总请求数</th>
+                    <th>请求成功比例(%)</th>
+                    <th>50th耗时(ms)</th>
+                    <th>95th耗时(ms)</th>
+                    <th>平均耗时(ms)</th>
+                    <th>最大耗时(ms)</th>
+                    <th>任务实际耗时(s)</th>
+                </tr>
+                </thead>
+                <tbody id="resultsTableBody">
+                <!-- Results will be inserted here -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    let targetCount = 1;
+
+    // Add new target
+    document.getElementById('addTargetBtn').addEventListener('click', function() {
+        targetCount++;
+        const newTarget =
+            `<div class="target-card">
+                <span class="delete-target" onclick="deleteTarget(this)">✖</span>
+                <h5>任务${targetCount}</h5>
+                <div class="mb-1">
+                    <label for="url${targetCount}" class="form-label">接口路径</label>
+                    <input type="text" class="form-control" id="url${targetCount}" name="url" required>
+                </div>
+                <div class="mb-1">
+                    <label for="method${targetCount}" class="form-label">请求方式</label>
+                    <select class="form-select" id="method${targetCount}" name="method">
+                        <option value="GET">GET</option>
+                        <option value="POST">POST</option>
+                    </select>
+                </div>
+                <div class="mb-1">
+                    <label for="rate${targetCount}" class="form-label">压测QPS(每秒)</label>
+                    <input type="number" class="form-control" id="rate${targetCount}" name="rate" required>
+                </div>
+                <div class="mb-1">
+                    <label for="duration${targetCount}" class="form-label">压测时间(秒)</label>
+                    <input type="number" class="form-control" id="duration${targetCount}" name="duration" required>
+                </div>
+                <div class="mb-1">
+                    <label for="headers${targetCount}" class="form-label">请求头</label>
+                    <input type="text" class="form-control" id="headers${targetCount}" name="headers">
+                </div>
+                <div class="mb-1">
+                    <label for="body${targetCount}" class="form-label">请求体</label>
+                    <textarea class="form-control" id="body${targetCount}" name="body" rows="2"></textarea>
+                </div>
+            </div>`;
+        document.getElementById('targets').insertAdjacentHTML('beforeend', newTarget);
+    });
+
+    // Delete target
+    function deleteTarget(targetElement) {
+        targetElement.parentElement.remove();
+    }
+
+    // Handle form submission
+    document.getElementById('loadTestForm').addEventListener('submit', function(event) {
+        event.preventDefault();
+
+        const targets = [];
+        document.querySelectorAll('.target-card').forEach((target, index) => {
+            const url = target.querySelector('input[name="url"]').value;
+            const method = target.querySelector('select[name="method"]').value;
+            const rate = target.querySelector('input[name="rate"]').value;
+            const duration = target.querySelector('input[name="duration"]').value;
+            const headers = target.querySelector('input[name="headers"]').value || '{}';
+            const body = target.querySelector('textarea[name="body"]').value;
+
+            targets.push({
+                url,
+                method,
+                rate: parseInt(rate),
+                duration: parseInt(duration),
+                header: JSON.parse(headers),
+                body
+            });
+        });
+
+        const config = { targets };
+
+        // Send request to server
+        fetch('http://localhost:2112/loadTest', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(config)
+        })
+            .then(response => response.json())
+            .then(data => {
+                const resultsTableBody = document.getElementById('resultsTableBody');
+                resultsTableBody.innerHTML = ''; // Clear existing results
+                data.forEach(result => {
+                    const resultRow =
+                        `<tr>
+                            <td>${result.target}</td>
+                            <td>${result.rate}</td>
+                            <td>${result.duration}</td>
+                            <td>${result.metrics.requests}</td>
+                            <td>${(result.metrics.success * 100).toFixed(2)}</td>
+                            <td>${result.metrics.latencies["50th"]}</td>
+                            <td>${result.metrics.latencies["95th"]}</td>
+                            <td>${result.metrics.latencies.mean}</td>
+                            <td>${result.metrics.latencies.max}</td>
+                            <td>${result.time.toFixed(2)}</td>
+                        </tr>`;
+                    resultsTableBody.insertAdjacentHTML('beforeend', resultRow);
+                });
+            })
+            .catch(error => console.error('Error:', error));
+    });
+</script>
+
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

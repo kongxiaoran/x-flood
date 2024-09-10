@@ -1,3 +1,11 @@
 {
-  "workers":["http://localhost:2112/workerLoadTest","http://localhost:2114/workerLoadTest"]
+  "workers":[
+    {
+      "name":"worker1",
+      "host":"127.0.0.1",
+      "port":2113,
+      "tcpPort":2114,
+      "weight":1
+    }
+  ]
 }

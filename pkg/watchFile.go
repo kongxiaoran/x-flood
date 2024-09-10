@@ -1,12 +1,28 @@
-package main
+package pkg
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/fsnotify/fsnotify"
+	"io/ioutil"
 	"log"
 	"os"
 	"time"
 )
+
+// 读取配置文件
+func ReadWorkerConfig(filename string) {
+	data, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return
+	}
+
+	if err := json.Unmarshal(data, &GlobalWorkConfig); err != nil {
+		return
+	}
+	fmt.Println("加载工作节点配置成功")
+	fmt.Println(GlobalWorkConfig)
+}
 
 func StartFileWatcher(configPath string) {
 	// 创建一个新的Watcher实例
@@ -28,7 +44,7 @@ func StartFileWatcher(configPath string) {
 				if event.Op&fsnotify.Write == fsnotify.Write {
 					fmt.Println("文件被修改,重新加载配置文件:", event.Name)
 					// 当文件被修改时触发的函数
-					readWorkerConfig(configPath)
+					ReadWorkerConfig(configPath)
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {

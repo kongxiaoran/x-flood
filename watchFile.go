@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"github.com/fsnotify/fsnotify"
 	"log"
+	"os"
+	"time"
 )
 
 func StartFileWatcher(configPath string) {
@@ -37,11 +39,28 @@ func StartFileWatcher(configPath string) {
 		}
 	}()
 
-	// 添加需要监控的文件或目录
-	err = watcher.Add(configPath)
-	if err != nil {
-		log.Fatal(err)
-	}
+	// 监控文件是否存在，如果文件不存在则不断尝试添加
+	go func() {
+		for {
+			// 检查文件是否存在
+			if _, err := os.Stat(configPath); os.IsNotExist(err) {
+				// 文件不存在，打印警告并等待一段时间
+				log.Printf("文件 %s 不存在，等待创建...", configPath)
+				time.Sleep(5 * time.Second) // 等待 5 秒后重试
+				continue
+			}
+
+			// 尝试添加文件到监控列表中
+			err := watcher.Add(configPath)
+			if err != nil {
+				log.Printf("添加文件监控失败: %v", err)
+			} else {
+				log.Printf("开始监控文件: %s", configPath)
+				break
+			}
+		}
+	}()
+
 	// 阻止程序退出
 	<-make(chan struct{})
 }

@@ -109,12 +109,12 @@ var content embed.FS
 
 func main() {
 
-	readWorkerConfig("./config.yml")
+	readWorkerConfig("/app/config.yml")
 
 	// 启动文件监听
-	fmt.Println("启动文件监听:", "./config.yml")
+	fmt.Println("启动文件监听:", "/app/config.yml")
 	go func() {
-		StartFileWatcher("./config.yml")
+		StartFileWatcher("/app/config.yml")
 	}()
 
 	http.Handle("/", http.FileServer(http.FS(content)))

@@ -1,6 +1,9 @@
 # 构建阶段
 FROM golang:1.21-alpine AS builder
 
+# 设置 Go 模块代理为国内代理
+ENV GOPROXY=https://goproxy.cn,direct
+
 # 设置工作目录
 WORKDIR /app
 

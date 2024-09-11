@@ -9,14 +9,6 @@ import (
 
 func main() {
 
-	//pkg.ReadWorkerConfig("config.yml")
-
-	// 启动文件监听
-	//fmt.Println("启动文件监听:", "config.yml")
-	//go func() {
-	//	pkg.StartFileWatcher("config.yml")
-	//}()
-
 	go pkg.WorkerListen("2114")
 
 	http.Handle("/", http.FileServer(http.FS(pkg.WebContent)))

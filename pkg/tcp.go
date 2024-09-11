@@ -11,7 +11,7 @@ import (
 
 func TcpConnectWorkNode() {
 	for _, worker := range GlobalWorkConfig.Workers {
-		ConnectWorkNode(&worker)
+		go ConnectWorkNode(&worker)
 	}
 }
 
@@ -21,13 +21,11 @@ func ConnectWorkNode(worker *WorkerInfo) {
 	conn, err := net.Dial("tcp", worker.Host+":"+strconv.Itoa(worker.TcpPort))
 	if err != nil {
 		fmt.Println("Error connecting:", err)
-		reconnectWorker(*worker) // 处理断线重连
-		return
+		reconnectWorker(worker) // 处理断线重连
+	} else {
+		worker.Conn = conn
 	}
-
-	worker.Conn = conn
 	fmt.Println("Connected to worker server")
-
 	sendDataToWorker(worker, "Hello from master server")
 
 	go func() {
@@ -39,7 +37,7 @@ func ConnectWorkNode(worker *WorkerInfo) {
 
 	// 2. 启动一个goroutine，持续接收来自work服务器的数据
 	stopCh := make(chan struct{})
-	go func(nodeInfo WorkerInfo, stop <-chan struct{}) {
+	go func(nodeInfo *WorkerInfo, stop <-chan struct{}) {
 		defer nodeInfo.Conn.Close() // 确保连接在退出时关闭
 		for {
 			select {
@@ -55,7 +53,7 @@ func ConnectWorkNode(worker *WorkerInfo) {
 				log.Print("Message from" + nodeInfo.Name + " : " + message)
 			}
 		}
-	}(*worker, stopCh)
+	}(worker, stopCh)
 }
 
 // 新增的函数，服务端发送数据到工作节点
@@ -68,11 +66,12 @@ func sendDataToWorker(worker *WorkerInfo, data string) {
 			log.Printf("Data sent to worker %s: %s", worker.Name, data)
 		}
 	} else {
-		log.Printf("No connection to worker %s", worker.Name)
+		log.Printf("No connection to worker %s,准备尝试重连", worker.Name)
+		reconnectWorker(worker)
 	}
 }
 
-func reconnectWorker(nodeInfo WorkerInfo) {
+func reconnectWorker(nodeInfo *WorkerInfo) {
 	maxRetries := 100                // 最大重试次数
 	retryInterval := 5 * time.Second // 每次重试的间隔
 	currentRetry := 0                // 当前的重试次数

@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"time"
 	"x-flood/pkg"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -16,5 +17,10 @@ func main() {
 	http.Handle("/metrics", promhttp.Handler())
 	http.Handle("/workerLoadTest", pkg.CorsMiddleware(http.HandlerFunc(pkg.WorkerLoadTestHandler)))
 	http.Handle("/loadTest", pkg.CorsMiddleware(http.HandlerFunc(pkg.MasterLoadTestHandler)))
+	http.Handle("/pressureTest", pkg.CorsMiddleware(http.HandlerFunc(pressureTest)))
 	http.ListenAndServe(":2113", nil)
+}
+
+func pressureTest(w http.ResponseWriter, r *http.Request) {
+	time.Sleep(40 * time.Millisecond)
 }

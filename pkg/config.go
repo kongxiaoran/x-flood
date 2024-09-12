@@ -7,6 +7,8 @@ import (
 
 var GlobalWorkConfig WorkerConfig
 
+var MasterConn net.Conn
+
 // 定义接收的负载测试配置结构
 type LoadTestConfig struct {
 	Targets []TargetConfig `json:"targets"`

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"sync"
 )
 
@@ -35,13 +36,13 @@ func MasterLoadTestHandler(w http.ResponseWriter, r *http.Request) {
 
 	for i, worker := range GlobalWorkConfig.Workers {
 		wg.Add(1)
-		go func(workerHost string, workerConfig []TargetConfig) {
+		go func(workerHost WorkerInfo, workerConfig []TargetConfig) {
 			defer wg.Done()
 			metrics, err := SendLoadTestToWorker(workerHost, LoadTestConfig{
 				Targets: workerConfig,
 			})
-			resultChan <- WorkerResult{Worker: workerHost, Metrics: metrics, Error: err}
-		}(worker.Host, workerConfigs[i])
+			resultChan <- WorkerResult{Worker: worker.Name, Metrics: metrics, Error: err}
+		}(worker, workerConfigs[i])
 	}
 	// 等待所有 goroutines 完成
 	wg.Wait()
@@ -65,13 +66,13 @@ func MasterLoadTestHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // 将负载测试请求发送到工作节点
-func SendLoadTestToWorker(workerURL string, config LoadTestConfig) ([]CustomMetrics, error) {
+func SendLoadTestToWorker(worker WorkerInfo, config LoadTestConfig) ([]CustomMetrics, error) {
 	body, err := json.Marshal(config)
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := http.Post(workerURL, "application/json", bytes.NewBuffer(body))
+	resp, err := http.Post("http://"+worker.Host+":"+strconv.Itoa(worker.Port)+"/workerLoadTest", "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		return nil, err
 	}

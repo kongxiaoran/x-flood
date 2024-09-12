@@ -5,8 +5,18 @@ import (
 	"fmt"
 	vegeta "github.com/tsenart/vegeta/lib"
 	"net/http"
+	"strconv"
 	"time"
 )
+
+type TaskProcess struct {
+	Method   string            `json:"method"`
+	URL      string            `json:"url"`
+	Body     string            `json:"body,omitempty"` // Body 可为空
+	Header   map[string]string `json:"header,omitempty"`
+	Rate     int               `json:"rate"`
+	Duration int               `json:"duration"`
+}
 
 // 工作节点：接收负载测试请求，执行测试并返回结果
 func WorkerLoadTestHandler(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +58,7 @@ func AttackTarget(attacker *vegeta.Attacker, target vegeta.Target, rate int, dur
 	startTime := time.Now()
 	// 使用 Attack 返回的通道
 	results := attacker.Attack(targeter, vegeta.Rate{Freq: rate, Per: time.Second}, time.Duration(duration)*time.Second, "LoadTest")
-
+	sum := 0
 	for {
 		select {
 		case <-ticker.C:
@@ -76,6 +86,8 @@ func AttackTarget(attacker *vegeta.Attacker, target vegeta.Target, rate int, dur
 				return myMetrics
 			}
 			metrics.Add(res)
+			sum++
+			//sendDataToMaster(MasterConn, "本次任务 完成请求次数:"+strconv.Itoa(sum))
 
 			// 记录每个接口的状态码、延迟、QPS
 			status := fmt.Sprintf("%d", res.Code)
@@ -94,7 +106,7 @@ func StartLoadTest(config LoadTestConfig) []CustomMetrics {
 	attacker := vegeta.NewAttacker()
 	metricsList := []CustomMetrics{}
 
-	for _, targetConfig := range config.Targets {
+	for i, targetConfig := range config.Targets {
 		target := vegeta.Target{
 			Method: targetConfig.Method,
 			URL:    targetConfig.URL,
@@ -103,6 +115,7 @@ func StartLoadTest(config LoadTestConfig) []CustomMetrics {
 		}
 		metrics := AttackTarget(attacker, target, targetConfig.Rate, targetConfig.Duration)
 		metricsList = append(metricsList, metrics)
+		sendDataToMaster(MasterConn, "测试 工作节点任务执行："+strconv.Itoa(i))
 	}
 	return metricsList
 }

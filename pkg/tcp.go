@@ -25,7 +25,7 @@ func ConnectWorkNode(worker *WorkerInfo) {
 	} else {
 		worker.Conn = conn
 	}
-	fmt.Println("Connected to worker server")
+	fmt.Println("Connected to " + worker.Name + " server")
 	sendDataToWorker(worker, "Hello from master server")
 
 	go func() {
@@ -62,12 +62,27 @@ func sendDataToWorker(worker *WorkerInfo, data string) {
 		_, err := worker.Conn.Write([]byte(data + "\n"))
 		if err != nil {
 			log.Printf("Failed to send data to %s: %v", worker.Name, err)
+			reconnectWorker(worker)
 		} else {
 			log.Printf("Data sent to worker %s: %s", worker.Name, data)
 		}
 	} else {
 		log.Printf("No connection to worker %s,准备尝试重连", worker.Name)
 		reconnectWorker(worker)
+	}
+}
+
+// 新增的函数 工作节点发送数据到主节点
+func sendDataToMaster(masterConn net.Conn, data string) {
+	if masterConn != nil {
+		_, err := masterConn.Write([]byte(data + "\n"))
+		if err != nil {
+			log.Printf("Failed to send data to %s: %v", "master server", err)
+		} else {
+			log.Printf("Data sent to worker %s: %s", "master server", data)
+		}
+	} else {
+		log.Printf("No connection to ", "master server")
 	}
 }
 
@@ -109,7 +124,7 @@ func WorkerListen(port string) {
 			log.Printf("Error accepting connection: %v", err)
 			continue
 		}
-
+		MasterConn = conn
 		// 处理连接
 		go HandleConnection(conn)
 	}

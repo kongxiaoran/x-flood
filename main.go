@@ -123,8 +123,17 @@ func main() {
 
 	http.Handle("/workerLoadTest", corsMiddleware(http.HandlerFunc(workerLoadTestHandler)))
 	http.Handle("/loadTest", corsMiddleware(http.HandlerFunc(masterLoadTestHandler)))
+	http.Handle("/test", corsMiddleware(http.HandlerFunc(test)))
 
 	http.ListenAndServe(":2112", nil)
+}
+
+func test(w http.ResponseWriter, r *http.Request) {
+	var buf bytes.Buffer
+	time.Sleep(40 * time.Millisecond)
+	// 模拟写入到http.ResponseWriter
+	fmt.Fprintf(&buf, "Hello, %s", "world")
+	w.Write([]byte(buf.String()))
 }
 
 // 读取配置文件
@@ -311,7 +320,7 @@ func attackTarget(attacker *vegeta.Attacker, target vegeta.Target, rate int, dur
 					Target:   target.URL,
 					Rate:     rate,
 					Duration: duration,
-					Time:     time.Since(startTime).Seconds() - 2,
+					Time:     time.Since(startTime).Seconds(),
 				}
 
 				return myMetrics

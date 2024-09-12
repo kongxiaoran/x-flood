@@ -100,6 +100,7 @@
                     <th>95th耗时(ms)</th>
                     <th>平均耗时(ms)</th>
                     <th>最大耗时(ms)</th>
+                    <th>响应体平均网络io(KB)</th>
                     <th>任务实际耗时(s)</th>
                 </tr>
                 </thead>
@@ -161,6 +162,8 @@
     document.getElementById('loadTestForm').addEventListener('submit', function(event) {
         event.preventDefault();
 
+        resultsTableBody.innerHTML = ''; // Clear existing results
+
         const targets = [];
         document.querySelectorAll('.target-card').forEach((target, index) => {
             const url = target.querySelector('input[name="url"]').value;
@@ -208,6 +211,7 @@
                             <td>${result.metrics.latencies["95th"]}</td>
                             <td>${result.metrics.latencies.mean}</td>
                             <td>${result.metrics.latencies.max}</td>
+                            <td>${(result.metrics.bytes_in.mean/1024).toFixed(2)}</td>
                             <td>${result.time.toFixed(2)}</td>
                         </tr>`;
                     resultsTableBody.insertAdjacentHTML('beforeend', resultRow);

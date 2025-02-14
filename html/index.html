@@ -339,32 +339,50 @@
         document.getElementById('targets').appendChild(newCard);
     }
 
+    // 修改收集数据的函数
+    function collectTargets() {
+        const targets = [];
+        document.querySelectorAll('.target-card').forEach(card => {
+            const target = {
+                method: card.querySelector('select[name="method"]').value,
+                url: card.querySelector('input[name="url"]').value,
+                rate: parseInt(card.querySelector('input[name="rate"]').value),
+                duration: parseInt(card.querySelector('input[name="duration"]').value),
+                header: {},
+            };
+
+            // 修复：使用 input 而不是 textarea 来获取请求头
+            const headerStr = card.querySelector('input[name="headers"]').value;
+            if (headerStr.trim()) {
+                try {
+                    target.header = JSON.parse(headerStr);
+                } catch (e) {
+                    console.error('Invalid header JSON:', e);
+                }
+            }
+
+            // 处理请求体，确保 POST 请求时正确设置
+            const bodyStr = card.querySelector('textarea[name="body"]').value;
+            if (bodyStr.trim()) {
+                target.body = bodyStr;
+                // 确保 POST 请求有 Content-Type
+                if (target.method === 'POST') {
+                    target.header['Content-Type'] = 'application/json';
+                }
+            }
+
+            targets.push(target);
+        });
+        return { targets };
+    }
+
     // Handle form submission
     document.getElementById('loadTestForm').addEventListener('submit', function(event) {
         event.preventDefault();
 
         resultsTableBody.innerHTML = ''; // Clear existing results
 
-        const targets = [];
-        document.querySelectorAll('.target-card').forEach((target, index) => {
-            const url = target.querySelector('input[name="url"]').value;
-            const method = target.querySelector('select[name="method"]').value;
-            const rate = target.querySelector('input[name="rate"]').value;
-            const duration = target.querySelector('input[name="duration"]').value;
-            const headers = target.querySelector('input[name="headers"]').value || '{}';
-            const body = target.querySelector('textarea[name="body"]').value;
-
-            targets.push({
-                url,
-                method,
-                rate: parseInt(rate),
-                duration: parseInt(duration),
-                header: JSON.parse(headers),
-                body
-            });
-        });
-
-        const config = { targets };
+        const config = collectTargets();
 
         resultsTableBody.innerHTML = '';
 

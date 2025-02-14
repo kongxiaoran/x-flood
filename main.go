@@ -11,8 +11,9 @@ import (
 	"time"
 
 	"context"
-	vegeta "github.com/tsenart/vegeta/lib"
 	"os"
+
+	vegeta "github.com/tsenart/vegeta/lib"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -133,7 +134,7 @@ type NodeInfo struct {
 func initRedis() {
 	redisHost := os.Getenv("REDIS_HOST")
 	if redisHost == "" {
-		redisHost = "localhost:6379"
+		redisHost = "10.10.17.29:6979"
 	}
 
 	redisClient = redis.NewClient(&redis.Options{
@@ -415,15 +416,27 @@ func startLoadTest(config LoadTestConfig) []CustomMetrics {
 }
 
 func convertHeader(header map[string]string) map[string][]string {
-	// 将单一键值对的 map 转换为 Vegeta 所需的 map[string][]string 类型
 	converted := make(map[string][]string)
 	for key, value := range header {
 		converted[key] = []string{value}
+	}
+	// 如果没有设置 Content-Type，且有请求体，则默认设置为 application/json
+	if _, hasContentType := converted["Content-Type"]; !hasContentType {
+		converted["Content-Type"] = []string{"application/json"}
 	}
 	return converted
 }
 
 func attackTarget(attacker *vegeta.Attacker, target vegeta.Target, rate int, duration int) CustomMetrics {
+	// 如果是 POST 请求，添加 Content-Type header
+	if target.Method == "POST" && target.Body != nil {
+		if target.Header == nil {
+			target.Header = make(map[string][]string)
+		}
+		// 设置 Content-Type 为 application/json
+		target.Header["Content-Type"] = []string{"application/json"}
+	}
+
 	// 创建 Targeter
 	targeter := vegeta.NewStaticTargeter(target)
 

@@ -1,10 +1,32 @@
 分布式压测工具
 
 
-docker build -t x-flood:0.0.1 .
+docker login -u tcdept-hf -p Tcdept@427 dockerhubbs.finchina.com
+
+docker build -t x-flood:0.0.2 .
 
 
-docker tag x-flood:0.0.1 10.15.98.150/library-hf/x-flood:0.0.1
-docker push 10.15.98.150/library-hf/x-flood:0.0.1
+docker tag x-flood:0.0.2 dockerhubbs.finchina.com/library-hf/x-flood:0.0.2
+docker push dockerhubbs.finchina.com/library-hf/x-flood:0.0.2
 
 docker run -p 2112:2112 -v /本机配置文件地址:/app/config.yml x-flood
+
+
+部署：
+分为主控节点和计算节点。主控节点只接受请求和分发任务、收集任务执行情况。计算节点负责接受主控节点分发的任务并执行，最终将执行结果返回给主控节点。
+主控/计算节点使用的是一套代码，是依靠程序执行时的环境变量来区分是担任主控还是计算节点
+
+工作节点环境变量配置：
+NODE_ROLE：worker
+REDIS_HOST：10.10.17.29:6978
+REDIS_PASSWORD：appredis42
+POD_IP：status.podIP
+
+主控节点环境变量配置：
+NODE_ROLE：master
+REDIS_HOST：10.10.17.29:6978
+REDIS_PASSWORD：appredis42
+POD_IP：status.podIP
+
+
+工作节点启动时，会向redis中指定key注册自己的信息。并且在运行过程中，一直定时发送心跳，以维持注册状态。主控节点是依靠redis来感知到工作节点的。

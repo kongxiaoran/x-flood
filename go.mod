@@ -3,8 +3,8 @@ module x-flood
 go 1.21
 
 require (
-	github.com/fsnotify/fsnotify v1.7.0
 	github.com/prometheus/client_golang v1.20.3
+	github.com/redis/go-redis/v9 v9.7.0
 	github.com/tsenart/vegeta v12.7.0+incompatible
 )
 
@@ -13,6 +13,7 @@ require (
 	github.com/bmizerany/perks v0.0.0-20230307044200-03f9df79da1e // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dgryski/go-gk v0.0.0-20200319235926-a69029f61654 // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/influxdata/tdigest v0.0.1 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/klauspost/compress v1.17.9 // indirect

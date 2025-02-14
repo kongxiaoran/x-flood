@@ -5,29 +5,33 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
-	vegeta "github.com/tsenart/vegeta/lib"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"sync"
 	"time"
 
+	"context"
+	vegeta "github.com/tsenart/vegeta/lib"
+	"os"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 )
 
 // 定义 Prometheus 指标
 var (
 	requestCount = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "vegeta_requests_total",
-			Help: "Total number of HTTP requests made by Vegeta.",
+			Name: "x_flood_requests_total",
+			Help: "Total number of HTTP requests made by X-Flood.",
 		},
 		[]string{"status", "endpoint"},
 	)
 
 	latencyHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "vegeta_request_latency_seconds",
+			Name:    "x_flood_request_latency_seconds",
 			Help:    "Histogram of latencies for requests.",
 			Buckets: prometheus.DefBuckets,
 		},
@@ -36,7 +40,7 @@ var (
 
 	qpsGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "vegeta_qps",
+			Name: "x_flood_qps",
 			Help: "Requests per second (QPS) for each endpoint.",
 		},
 		[]string{"endpoint"},
@@ -97,61 +101,159 @@ func init() {
 	prometheus.MustRegister(qpsGauge)
 }
 
-var workerConfig WorkerConfig
-
-// 定义配置文件结构
-type WorkerConfig struct {
-	Workers []string `json:"workers"`
-}
-
 //go:embed html/index.html
 var content embed.FS
 
-func main() {
+// Redis配置
+var (
+	redisClient *redis.Client
+	ctx         = context.Background()
+	// 节点信息的TTL时间
+	nodeTTL = 30 * time.Second
+	// 当前节点的角色
+	nodeRole string
+	// 当前节点的ID
+	nodeID string
+)
 
-	readWorkerConfig("/app/config.yml")
+// Redis中使用的键
+const (
+	WorkerNodesKey = "x-flood:workers" // Hash存储所有worker节点
+	MasterNodesKey = "x-flood:masters" // Hash存储所有master节点
+)
 
-	// 启动文件监听
-	fmt.Println("启动文件监听:", "/app/config.yml")
+// 节点信息结构
+type NodeInfo struct {
+	ID       string    `json:"id"`
+	Role     string    `json:"role"`
+	URL      string    `json:"url"`
+	LastSeen time.Time `json:"last_seen"`
+}
+
+func initRedis() {
+	redisHost := os.Getenv("REDIS_HOST")
+	if redisHost == "" {
+		redisHost = "localhost:6379"
+	}
+
+	redisClient = redis.NewClient(&redis.Options{
+		Addr:     redisHost,
+		Password: os.Getenv("REDIS_PASSWORD"),
+		DB:       0,
+	})
+
+	// 从环境变量获取节点角色和ID
+	nodeRole = os.Getenv("NODE_ROLE")
+	if nodeRole == "" {
+		nodeRole = "worker"
+	}
+
+	nodeID = os.Getenv("POD_NAME")
+	if nodeID == "" {
+		nodeID = fmt.Sprintf("%s-%s", nodeRole, getEnv("POD_IP", time.Now().Format("20060102150405")))
+	}
+}
+
+func getEnv(key, defaultValue string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	return value
+}
+
+// 注册节点到Redis
+func registerNode() {
+	nodeInfo := NodeInfo{
+		ID:       nodeID,
+		Role:     nodeRole,
+		URL:      fmt.Sprintf("http://%s:%s", getEnv("POD_IP", "localhost"), getEnv("PORT", "2112")),
+		LastSeen: time.Now(),
+	}
+
+	key := WorkerNodesKey
+	if nodeRole == "master" {
+		key = MasterNodesKey
+	}
+
+	// 定期更新节点存活状态
 	go func() {
-		StartFileWatcher("/app/config.yml")
+		ticker := time.NewTicker(nodeTTL / 2)
+		for range ticker.C {
+			// 更新 LastSeen 时间
+			nodeInfo.LastSeen = time.Now()
+			nodeData, _ := json.Marshal(nodeInfo)
+
+			// 更新当前节点的状态
+			redisClient.HSet(ctx, key, nodeID, nodeData)
+
+			// 清理过期的节点
+			cleanExpiredNodes(key)
+		}
 	}()
+}
 
-	http.Handle("/", http.FileServer(http.FS(content)))
-	// 启动 HTTP 服务，暴露 /metrics 端点
-	http.Handle("/metrics", promhttp.Handler())
+// 清理过期节点
+func cleanExpiredNodes(key string) {
+	result := redisClient.HGetAll(ctx, key)
+	if result.Err() != nil {
+		return
+	}
 
-	http.Handle("/workerLoadTest", corsMiddleware(http.HandlerFunc(workerLoadTestHandler)))
-	http.Handle("/loadTest", corsMiddleware(http.HandlerFunc(masterLoadTestHandler)))
+	for id, value := range result.Val() {
+		var nodeInfo NodeInfo
+		if err := json.Unmarshal([]byte(value), &nodeInfo); err != nil {
+			continue
+		}
+
+		// 如果节点超过 TTL 时间没有更新，则删除该节点
+		if time.Since(nodeInfo.LastSeen) > nodeTTL {
+			redisClient.HDel(ctx, key, id)
+		}
+	}
+}
+
+func main() {
+	// 初始化Redis连接
+	initRedis()
+
+	// 注册节点
+	registerNode()
+
+	// 根据节点角色启动不同的处理器
+	if nodeRole == "master" {
+		http.Handle("/loadTest", corsMiddleware(http.HandlerFunc(masterLoadTestHandler)))
+	} else {
+		http.Handle("/workerLoadTest", corsMiddleware(http.HandlerFunc(workerLoadTestHandler)))
+	}
+
 	http.Handle("/test", corsMiddleware(http.HandlerFunc(test)))
 
-	http.ListenAndServe(":2112", nil)
+	http.Handle("/metrics", promhttp.Handler())
+	http.Handle("/", http.FileServer(http.FS(content)))
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "2112"
+	}
+
+	http.ListenAndServe(":"+port, nil)
 }
 
-func test(w http.ResponseWriter, r *http.Request) {
+func test(w http.ResponseWriter, _ *http.Request) {
 	var buf bytes.Buffer
 	time.Sleep(40 * time.Millisecond)
-	// 模拟写入到http.ResponseWriter
 	fmt.Fprintf(&buf, "Hello, %s", "world")
-	w.Write([]byte(buf.String()))
-}
-
-// 读取配置文件
-func readWorkerConfig(filename string) {
-	data, err := ioutil.ReadFile(filename)
-	if err != nil {
-		return
-	}
-
-	if err := json.Unmarshal(data, &workerConfig); err != nil {
-		return
-	}
-	fmt.Println("加载工作节点配置成功")
-	fmt.Println(workerConfig)
+	w.Write(buf.Bytes())
 }
 
 // 主节点：接收负载测试请求，分发给多个工作节点，汇总结果
 func masterLoadTestHandler(w http.ResponseWriter, r *http.Request) {
+	if nodeRole != "master" {
+		http.Error(w, "This node is not a master", http.StatusForbidden)
+		return
+	}
+
 	fmt.Println("Received load test request. Start task")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
@@ -165,31 +267,39 @@ func masterLoadTestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 分发任务给工作节点
-	var allMetrics []CustomMetrics
+	// 获取可用的worker节点
+	workers := getAvailableWorkers()
+	if len(workers) == 0 {
+		http.Error(w, "No available workers", http.StatusServiceUnavailable)
+		return
+	}
 
-	// 使用 waitgroup 来等待所有 goroutines 完成
+	// 分割任务
+	workerConfigs := splitConfig(config.Targets, len(workers))
+
 	var wg sync.WaitGroup
-	resultChan := make(chan WorkerResult, len(workerConfig.Workers))
+	resultChan := make(chan WorkerResult, len(workers))
 
-	// 分割配置
-	workerConfigs := splitConfig(config.Targets, len(workerConfig.Workers))
-
-	for i, worker := range workerConfig.Workers {
+	// 分发任务给worker
+	for i := range workers {
 		wg.Add(1)
-		go func(worker string, workerConfig []TargetConfig) {
+		go func(worker NodeInfo, workerConfig []TargetConfig) {
 			defer wg.Done()
-			metrics, err := sendLoadTestToWorker(worker, LoadTestConfig{
+			metrics, err := sendLoadTestToWorker(worker.URL, LoadTestConfig{
 				Targets: workerConfig,
 			})
-			resultChan <- WorkerResult{Worker: worker, Metrics: metrics, Error: err}
-		}(worker, workerConfigs[i])
+			resultChan <- WorkerResult{Worker: worker.ID, Metrics: metrics, Error: err}
+		}(workers[i], workerConfigs[i])
 	}
+
+	// 收集所有结果
+	var allMetrics []CustomMetrics
+
 	// 等待所有 goroutines 完成
 	wg.Wait()
 
 	// 收集所有结果
-	for range workerConfig.Workers {
+	for range workers {
 		result := <-resultChan
 		if result.Error != nil {
 			http.Error(w, fmt.Sprintf("Failed to contact worker %s: %v", result.Worker, result.Error), http.StatusInternalServerError)
@@ -206,6 +316,31 @@ func masterLoadTestHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("task end")
 }
 
+// 获取可用的worker节点
+func getAvailableWorkers() []NodeInfo {
+	var workers []NodeInfo
+
+	// 从Redis获取所有worker节点
+	result := redisClient.HGetAll(ctx, WorkerNodesKey)
+	if result.Err() != nil {
+		return workers
+	}
+
+	for _, value := range result.Val() {
+		var nodeInfo NodeInfo
+		if err := json.Unmarshal([]byte(value), &nodeInfo); err != nil {
+			continue
+		}
+		workers = append(workers, nodeInfo)
+		// 检查节点是否存活
+		//if time.Since(nodeInfo.LastSeen) < nodeTTL {
+		//	workers = append(workers, nodeInfo)
+		//}
+	}
+
+	return workers
+}
+
 // 将负载测试请求发送到工作节点
 func sendLoadTestToWorker(workerURL string, config LoadTestConfig) ([]CustomMetrics, error) {
 	body, err := json.Marshal(config)
@@ -213,19 +348,23 @@ func sendLoadTestToWorker(workerURL string, config LoadTestConfig) ([]CustomMetr
 		return nil, err
 	}
 
-	resp, err := http.Post(workerURL, "application/json", bytes.NewBuffer(body))
+	resp, err := http.Post(workerURL+"/workerLoadTest", "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("worker returned status %d", resp.StatusCode)
+		// 读取错误响应内容以便调试
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("worker returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var metrics []CustomMetrics
 	if err := json.NewDecoder(resp.Body).Decode(&metrics); err != nil {
-		return nil, err
+		// 读取响应内容以便调试
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to decode response: %v, response body: %s", err, string(bodyBytes))
 	}
 
 	return metrics, nil

@@ -3,11 +3,13 @@
 
 docker login -u tcdept-hf -p Tcdept@427 dockerhubbs.finchina.com
 
-docker build -t x-flood:0.0.2 .
+docker build -t x-flood:0.0.3 .
 
+docker tag ghcr.io/open-webui/open-webui:main dockerhubbs.finchina.com/library-hf/open-webui:main
+docker push dockerhubbs.finchina.com/library-hf/open-webui:main
 
-docker tag x-flood:0.0.2 dockerhubbs.finchina.com/library-hf/x-flood:0.0.2
-docker push dockerhubbs.finchina.com/library-hf/x-flood:0.0.2
+docker tag x-flood:0.0.3 dockerhubbs.finchina.com/library-hf/x-flood:0.0.3
+docker push dockerhubbs.finchina.com/library-hf/x-flood:0.0.3
 
 docker run -p 2112:2112 -v /本机配置文件地址:/app/config.yml x-flood
 
@@ -18,14 +20,11 @@ docker run -p 2112:2112 -v /本机配置文件地址:/app/config.yml x-flood
 
 工作节点环境变量配置：
 NODE_ROLE：worker
-REDIS_HOST：10.10.17.29:6978
-REDIS_PASSWORD：appredis42
 POD_IP：status.podIP
 
 主控节点环境变量配置：
 NODE_ROLE：master
-REDIS_HOST：10.10.17.29:6978
-REDIS_PASSWORD：appredis42
+MASTER_URL: 10.10.18.188:21120
 POD_IP：status.podIP
 
 

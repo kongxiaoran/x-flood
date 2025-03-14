@@ -227,10 +227,18 @@
                     <label for="body1" class="form-label">请求体</label>
                     <textarea class="form-control" id="body1" name="body" rows="2" placeholder="post请求时使用（JSON格式）"></textarea>
                 </div>
+                <div class="mb-1">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="checkReturnCode1" name="checkReturnCode" checked>
+                        <label class="form-check-label" for="checkReturnCode1">若接口响应内容returncode不为0，则视为接口失败</label>
+                    </div>
+                </div>
             </div>
         </div>
-        <button type="button" class="btn btn-secondary" id="addTargetBtn">添加测试接口</button>
-        <button type="submit" class="btn btn-primary">发送测试</button>
+        <div class="d-flex align-items-center gap-3">
+            <button type="button" class="btn btn-secondary" id="addTargetBtn">添加测试接口</button>
+            <button type="submit" class="btn btn-primary">发送测试</button>
+        </div>
     </form>
 
     <!-- Result section -->
@@ -299,6 +307,12 @@
                     <label for="body${targetCount}" class="form-label">请求体</label>
                     <textarea class="form-control" id="body${targetCount}" name="body" rows="2"></textarea>
                 </div>
+                <div class="mb-1">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="checkReturnCode${targetCount}" name="checkReturnCode" checked>
+                        <label class="form-check-label" for="checkReturnCode${targetCount}">若接口响应内容returncode不为0，则视为接口失败</label>
+                    </div>
+                </div>
             </div>`;
         document.getElementById('targets').insertAdjacentHTML('beforeend', newTarget);
     });
@@ -349,6 +363,7 @@
                 rate: parseInt(card.querySelector('input[name="rate"]').value),
                 duration: parseInt(card.querySelector('input[name="duration"]').value),
                 header: {},
+                checkReturnCode: card.querySelector('input[name="checkReturnCode"]').checked
             };
 
             // 修复：使用 input 而不是 textarea 来获取请求头

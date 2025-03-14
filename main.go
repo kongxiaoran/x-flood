@@ -5,19 +5,15 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"sync"
-	"time"
-
-	"context"
-	"os"
-
-	vegeta "github.com/tsenart/vegeta/lib"
-
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/redis/go-redis/v9"
+	vegeta "github.com/tsenart/vegeta/lib"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"time"
 )
 
 // 定义 Prometheus 指标
@@ -50,16 +46,17 @@ var (
 
 // 定义接收的负载测试配置结构
 type LoadTestConfig struct {
-	Targets []TargetConfig `json:"targets"`
+	Targets []TargetConfig `json"targets"`
 }
 
 type TargetConfig struct {
-	Method   string            `json:"method"`
-	URL      string            `json:"url"`
-	Body     string            `json:"body,omitempty"` // Body 可为空
-	Header   map[string]string `json:"header,omitempty"`
-	Rate     int               `json:"rate"`
-	Duration int               `json:"duration"`
+	Method          string            `json:"method"`
+	URL             string            `json:"url"`
+	Body            string            `json:"body,omitempty"` // Body 可为空
+	Header          map[string]string `json:"header,omitempty"`
+	Rate            int               `json:"rate"`
+	Duration        int               `json:"duration"`
+	CheckReturnCode bool              `json:"checkReturnCode"`
 }
 
 type CustomMetrics struct {
@@ -105,22 +102,21 @@ func init() {
 //go:embed html/index.html
 var content embed.FS
 
-// Redis配置
 var (
-	redisClient *redis.Client
-	ctx         = context.Background()
 	// 节点信息的TTL时间
 	nodeTTL = 30 * time.Second
 	// 当前节点的角色
 	nodeRole string
 	// 当前节点的ID
 	nodeID string
+	// 服务注册中心实例
+	registry *Registry
 )
 
-// Redis中使用的键
+// 节点类型常量
 const (
-	WorkerNodesKey = "x-flood:workers" // Hash存储所有worker节点
-	MasterNodesKey = "x-flood:masters" // Hash存储所有master节点
+	WorkerNodesKey = "workers" // 存储所有worker节点
+	MasterNodesKey = "masters" // 存储所有master节点
 )
 
 // 节点信息结构
@@ -131,18 +127,7 @@ type NodeInfo struct {
 	LastSeen time.Time `json:"last_seen"`
 }
 
-func initRedis() {
-	redisHost := os.Getenv("REDIS_HOST")
-	if redisHost == "" {
-		redisHost = "10.10.17.29:6979"
-	}
-
-	redisClient = redis.NewClient(&redis.Options{
-		Addr:     redisHost,
-		Password: os.Getenv("REDIS_PASSWORD"),
-		DB:       0,
-	})
-
+func initRegistry() {
 	// 从环境变量获取节点角色和ID
 	nodeRole = os.Getenv("NODE_ROLE")
 	if nodeRole == "" {
@@ -152,6 +137,13 @@ func initRedis() {
 	nodeID = os.Getenv("POD_NAME")
 	if nodeID == "" {
 		nodeID = fmt.Sprintf("%s-%s", nodeRole, getEnv("POD_IP", time.Now().Format("20060102150405")))
+	}
+
+	// 只有 master 节点创建注册中心
+	if nodeRole == "master" {
+		registry = NewRegistry(nodeTTL)
+		// 添加注册中心的 HTTP 处理器
+		http.Handle("/register", corsMiddleware(registry))
 	}
 }
 
@@ -165,58 +157,41 @@ func getEnv(key, defaultValue string) string {
 
 // 注册节点到Redis
 func registerNode() {
-	nodeInfo := NodeInfo{
+	nodeInfo := &NodeInfo{
 		ID:       nodeID,
 		Role:     nodeRole,
 		URL:      fmt.Sprintf("http://%s:%s", getEnv("POD_IP", "localhost"), getEnv("PORT", "2112")),
 		LastSeen: time.Now(),
 	}
 
-	key := WorkerNodesKey
 	if nodeRole == "master" {
-		key = MasterNodesKey
-	}
-
-	// 定期更新节点存活状态
-	go func() {
-		ticker := time.NewTicker(nodeTTL / 2)
-		for range ticker.C {
-			// 更新 LastSeen 时间
-			nodeInfo.LastSeen = time.Now()
-			nodeData, _ := json.Marshal(nodeInfo)
-
-			// 更新当前节点的状态
-			redisClient.HSet(ctx, key, nodeID, nodeData)
-
-			// 清理过期的节点
-			cleanExpiredNodes(key)
-		}
-	}()
-}
-
-// 清理过期节点
-func cleanExpiredNodes(key string) {
-	result := redisClient.HGetAll(ctx, key)
-	if result.Err() != nil {
+		// master节点不需要注册自己
 		return
 	}
 
-	for id, value := range result.Val() {
-		var nodeInfo NodeInfo
-		if err := json.Unmarshal([]byte(value), &nodeInfo); err != nil {
-			continue
-		}
-
-		// 如果节点超过 TTL 时间没有更新，则删除该节点
-		if time.Since(nodeInfo.LastSeen) > nodeTTL {
-			redisClient.HDel(ctx, key, id)
-		}
+	// worker节点通过HTTP注册到master
+	masterURL := getEnv("MASTER_URL", "")
+	if masterURL == "" {
+		fmt.Println("Error: MASTER_URL environment variable is required for worker nodes")
+		os.Exit(1)
 	}
+	// 确保masterURL包含协议前缀
+	if !strings.HasPrefix(masterURL, "http://") && !strings.HasPrefix(masterURL, "https://") {
+		masterURL = "http://" + masterURL
+	}
+	// 创建注册客户端
+	client := NewRegistryClient(masterURL, nodeInfo, nodeTTL)
+	// 注册并开始心跳
+	if err := client.Register(); err != nil {
+		fmt.Printf("Failed to register with master: %v\n", err)
+		os.Exit(1)
+	}
+	client.StartHeartbeat()
 }
 
 func main() {
-	// 初始化Redis连接
-	initRedis()
+	// 初始化注册中心
+	initRegistry()
 
 	// 注册节点
 	registerNode()
@@ -224,6 +199,7 @@ func main() {
 	// 根据节点角色启动不同的处理器
 	if nodeRole == "master" {
 		http.Handle("/loadTest", corsMiddleware(http.HandlerFunc(masterLoadTestHandler)))
+		http.Handle("/workers", corsMiddleware(http.HandlerFunc(getWorkersHandler)))
 	} else {
 		http.Handle("/workerLoadTest", corsMiddleware(http.HandlerFunc(workerLoadTestHandler)))
 	}
@@ -271,7 +247,9 @@ func masterLoadTestHandler(w http.ResponseWriter, r *http.Request) {
 	// 获取可用的worker节点
 	workers := getAvailableWorkers()
 	if len(workers) == 0 {
-		http.Error(w, "No available workers", http.StatusServiceUnavailable)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "没有可用的工作节点"})
 		return
 	}
 
@@ -319,27 +297,8 @@ func masterLoadTestHandler(w http.ResponseWriter, r *http.Request) {
 
 // 获取可用的worker节点
 func getAvailableWorkers() []NodeInfo {
-	var workers []NodeInfo
-
-	// 从Redis获取所有worker节点
-	result := redisClient.HGetAll(ctx, WorkerNodesKey)
-	if result.Err() != nil {
-		return workers
-	}
-
-	for _, value := range result.Val() {
-		var nodeInfo NodeInfo
-		if err := json.Unmarshal([]byte(value), &nodeInfo); err != nil {
-			continue
-		}
-		workers = append(workers, nodeInfo)
-		// 检查节点是否存活
-		//if time.Since(nodeInfo.LastSeen) < nodeTTL {
-		//	workers = append(workers, nodeInfo)
-		//}
-	}
-
-	return workers
+	// 从注册中心获取所有可用的worker节点
+	return registry.GetNodes(WorkerNodesKey)
 }
 
 // 将负载测试请求发送到工作节点
@@ -409,7 +368,7 @@ func startLoadTest(config LoadTestConfig) []CustomMetrics {
 			Body:   []byte(targetConfig.Body),
 			Header: convertHeader(targetConfig.Header),
 		}
-		metrics := attackTarget(attacker, target, targetConfig.Rate, targetConfig.Duration)
+		metrics := attackTarget(attacker, target, targetConfig.Rate, targetConfig.Duration, targetConfig)
 		metricsList = append(metricsList, metrics)
 	}
 	return metricsList
@@ -427,7 +386,7 @@ func convertHeader(header map[string]string) map[string][]string {
 	return converted
 }
 
-func attackTarget(attacker *vegeta.Attacker, target vegeta.Target, rate int, duration int) CustomMetrics {
+func attackTarget(attacker *vegeta.Attacker, target vegeta.Target, rate int, duration int, targetConfig TargetConfig) CustomMetrics {
 	// 如果是 POST 请求，添加 Content-Type header
 	if target.Method == "POST" && target.Body != nil {
 		if target.Header == nil {
@@ -477,6 +436,22 @@ func attackTarget(attacker *vegeta.Attacker, target vegeta.Target, rate int, dur
 
 				return myMetrics
 			}
+			// 如果需要检查returncode，解析响应体并检查returncode字段
+			if targetConfig.CheckReturnCode && res.Code == http.StatusOK {
+				var response struct {
+					ReturnCode int `json:"returncode"`
+				}
+				response.ReturnCode = -1
+
+				if err := json.Unmarshal(res.Body, &response); err != nil {
+					fmt.Printf("Failed to parse response body: %v\n", err)
+					res.Code = http.StatusBadRequest
+				} else if response.ReturnCode != 0 {
+					res.Code = http.StatusBadRequest // 将非0的returncode视为请求失败
+					fmt.Printf("接口返回的returncode非0: %d\n", response.ReturnCode)
+				}
+			}
+
 			metrics.Add(res)
 
 			// 记录每个接口的状态码、延迟、QPS
@@ -488,6 +463,21 @@ func attackTarget(attacker *vegeta.Attacker, target vegeta.Target, rate int, dur
 
 			requestsPerSecond++
 		}
+	}
+}
+
+// 获取所有工作节点信息的处理器
+func getWorkersHandler(w http.ResponseWriter, r *http.Request) {
+	if nodeRole != "master" {
+		http.Error(w, "This node is not a master", http.StatusForbidden)
+		return
+	}
+
+	workers := getAvailableWorkers()
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(workers); err != nil {
+		http.Error(w, "Failed to encode JSON", http.StatusInternalServerError)
 	}
 }
 
